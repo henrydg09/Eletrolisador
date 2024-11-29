@@ -1,0 +1,186 @@
+function eletrolisador_PEM()
+% Parâmetros constantes
+R = 8.314;            % Constante universal dos gases [J/(mol·K)]
+F = 96485.3;          % Constante de Faraday [C/mol]
+Z = 2;                % Número de elétrons envolvidos
+V_rev = 1.229;        % Tensão reversível [V]
+eta = 1;              % Eficiência faradaica assumida
+massamolar = 2.016e-3; % Massa molar do hidrogênio [kg/mol]
+HHV = 141480000;      % Poder calorífico superior [J/kg]
+% Parâmetros de ativação
+alpha_cat = 0.5;      % Coeficiente de transferência de carga do cátodo
+alpha_an = 0.5;       % Coeficiente de transferência de carga do ânodo
+j0_cat = 0.278;       % Densidade de corrente de troca no cátodo [A/cm²]
+j0_an = 1e-5;         % Densidade de corrente de troca no ânodo [A/cm²]
+% Parâmetros de resistência ôhmica
+R_ele = 0.035e-3;     % Resistência elétrica [ohm·cm²]
+t_mem = 0.0178;       % Espessura da membrana [cm]
+lambda = 22;          % Parâmetro de hidratação
+% Temperatura da célula em graus Celsius
+T_celsius = 60;
+T_cell = T_celsius + 273.15;  % Temperatura em Kelvin
+% Área do eletrodo
+area_eletrodo = 6000; % em cm²
+% Número de placas (células) no eletrolisador
+num_placas = 24*25;  % Defina o número de placas desejado
+% Definir a potência mínima do eletrolisador (1,75 MW)
+potencia_minima = 1.75e6;
+
+% Definir a potência mínima da fonte considerando o curtailment máximo
+curtailment_max = 0.8;
+potencia_minima_fonte = potencia_minima / curtailment_max;
+
+% Definir a potência da fonte (exemplo com valores de 24 horas)
+% Certifique-se de que a potência da fonte é maior ou igual à potência mínima da fonte
+potencia_fonte = max(potencia_minima_fonte, [5e6, 6e6, 6e6, 6e6, 7e6, 10e6, 13e6, 16e6, 18e6, 19e6, 20e6, 20e6, ...
+                 19e6, 17e6, 15e6, 13e6, 12e6, 10e6, 8e6, 7e6, 6e6, 6e6, 5e6, 5e6]);
+
+% Calcular o fator de curtailment variável (entre 0.2 e 0.8)
+curtailment_factor = 0.2 + 0.6 * rand(1, 24);  % Fator de curtailment aleatório para cada hora
+
+% Aplicar o fator de curtailment à potência da fonte para calcular a potência prevista
+potencia_prevista_curtailed = potencia_fonte .* curtailment_factor;
+
+% Garantir que a potência prevista não fique abaixo da potência mínima
+potencia_prevista_curtailed = max(potencia_prevista_curtailed, potencia_minima);
+
+% Calcular a potência entregue (potencia_fonte - potencia_prevista_curtailed)
+potencia_24h = potencia_fonte - potencia_prevista_curtailed;
+
+% Garantir que a potência entregue não seja menor que a potência mínima
+potencia_24h = max(potencia_24h, potencia_minima);
+% Criar o gráfico
+figure;
+hold on; % Para sobrepor os gráficos
+% Convertendo as potências para MW (1 MW = 1e6 W)
+potencia_fonte_MW = potencia_fonte / 1e6;
+potencia_prevista_curtailed_MW = potencia_prevista_curtailed / 1e6;
+potencia_24h_MW = potencia_24h / 1e6;
+% Plotando a potência da fonte em MW
+plot(1:24, potencia_fonte_MW, 'r', 'LineWidth', 2, 'DisplayName', 'Potência da Fonte (MW)');
+% Plotando a potência do eletrolisador com curtailment em MW
+plot(1:24, potencia_prevista_curtailed_MW, 'b', 'LineWidth', 2, 'DisplayName', 'Potência Prevista (Curtailment) (MW)');
+% Plotando a potência entregue ao eletrolisador em MW
+plot(1:24, potencia_24h_MW, 'Color', [34/255, 139/255, 34/255], 'LineWidth', 2, 'DisplayName', 'Potência Entregue ao Eletrolisador (MW)');
+% Adicionar título e rótulos
+title('Potências da Fonte, Eletrolisador e Potência Entregue ao Longo das 24 Horas');
+xlabel('Hora do Dia');
+ylabel('Potência (MW)');
+% Configurar o eixo X para exibir as horas de 1 a 24
+xticks(1:24);
+% Adicionar legenda
+legend('show');
+% Adicionar grade
+grid on;
+hold off; % Finaliza sobreposição dos gráficos
+[V_cell_values, H2_production_kg_s, H2_production_kg_h, H2_production_L_min, eficiencia_energetica, V_rev_values, V_act_an_values, V_act_cat_values, V_ohm_values] = ...
+   calcularResultados(potencia_24h, area_eletrodo, num_placas, R, F, Z, V_rev, eta, massamolar, ...
+                      alpha_cat, alpha_an, j0_cat, j0_an, R_ele, t_mem, lambda, T_cell, HHV);
+% Plotar os resultados
+plotResultados(potencia_24h, V_cell_values, H2_production_kg_h, H2_production_L_min, eficiencia_energetica);
+end
+function [V_cell_values, H2_production_kg_s, H2_production_kg_h, H2_production_L_min, eficiencia_energetica, V_rev_values, V_act_an_values, V_act_cat_values, V_ohm_values] = ...
+calcularResultados(potencia_24h, area_eletrodo, num_placas, R, F, Z, V_rev, eta, massamolar, ...
+                  alpha_cat, alpha_an, j0_cat, j0_an, R_ele, t_mem, lambda, T_cell, HHV)
+% Inicializar vetores para armazenar os resultados
+V_cell_values = zeros(size(potencia_24h));       % Tensão da célula
+H2_production_kg_s = zeros(size(potencia_24h));  % Produção de H2 em kg/s
+H2_production_kg_h = zeros(size(potencia_24h));  % Produção de H2 em kg/h
+H2_production_L_min = zeros(size(potencia_24h));  % Produção de H2 em L/min
+eficiencia_energetica = zeros(size(potencia_24h));    % Eficiência energética
+% Inicializar vetores para as contribuições de tensão
+V_rev_values = zeros(size(potencia_24h));       % Tensão reversível
+V_act_an_values = zeros(size(potencia_24h));    % Sobretensão de ativação do ânodo
+V_act_cat_values = zeros(size(potencia_24h));    % Sobretensão de ativação do cátodo
+V_ohm_values = zeros(size(potencia_24h));        % Sobretensão ôhmica
+% Densidade do hidrogênio em kg/L
+densidade_H2 = 0.00008988;  % kg/L
+% Loop para calcular a tensão da célula, produção de H2 e eficiência para cada hora
+for i = 1:length(potencia_24h)
+   P = potencia_24h(i);  % Potência em watts para a hora i
+    % Suponha uma tensão média da célula (pode ser ajustada conforme necessário)
+   V_cell_inicial = 2.0;  % Tensão média inicial da célula (em volts)
+    % Calcular a corrente total (I_total = P / V)
+   I_total = P / V_cell_inicial;  % Corrente total (A)
+    % Calcular a densidade de corrente (j = I_total / (área_eletrodo * número de placas))
+   j = I_total / (area_eletrodo * num_placas);  % Densidade de corrente (A/cm²)
+    % Cálculo da resistência iônica (R_ion)
+   R_ion = t_mem / (((0.005139 * lambda) - 0.00326) * exp(1268 * ((1/303) - (1/T_cell))));
+   % Sobretensão de ativação
+   V_act_an = (R * T_cell / (alpha_an * Z * F)) * log(j / j0_an);
+   V_act_cat = abs(-(R * T_cell) / (alpha_cat * Z * F) * log(j / j0_cat));
+   % Sobretensão ôhmica
+   V_ohm = j * (R_ele + R_ion);
+    % Tensão da célula (V_cell)
+   V_cell = V_rev + V_act_an + V_act_cat + V_ohm;
+       % Produção de H2 em kg/s
+      Q_H2_kg_s = max(0, (I_total * eta * massamolar) / (2 * F));  % kg/s (não pode ser negativo)
+    
+      % Conversão para kg/h
+      Q_H2_kg_h = Q_H2_kg_s * 3600;  % kg/s para kg/h
+    
+      % Conversão para L/min
+      Q_H2_L_min = (Q_H2_kg_s / densidade_H2) * 60;  % kg/s para L/min
+    % Armazenar os resultados
+   V_cell_values(i) = V_cell;
+   H2_production_kg_s(i) = Q_H2_kg_s;  % Armazenar produção em kg/s
+   H2_production_kg_h(i) = Q_H2_kg_h;  % Armazenar produção em kg/h
+   H2_production_L_min(i) = Q_H2_L_min;  % Armazenar produção em L/min
+    % Energia elétrica consumida
+   energia_eletrica = V_cell * I_total;  % Energia em watts
+    % Eficiência energética (η = energia de saída / energia elétrica)
+   eficiencia_energetica(i) = (Q_H2_kg_s * HHV) / energia_eletrica * 100;  % em porcentagem
+   V_rev_values(i) = V_rev;
+   V_act_an_values(i) = V_act_an;
+   V_act_cat_values(i) = V_act_cat;
+   V_ohm_values(i) = V_ohm;
+end
+end
+function plotResultados(potencia_24h, V_cell_values, H2_production_kg_h, H2_production_L_min, eficiencia_energetica)
+% Gráficos dos resultados
+tempo = 1:24;
+% Cálculo das médias
+producao_media_kg_h = mean(H2_production_kg_h);  % Média de produção de H2 (kg/h)
+eficiencia_media = mean(eficiencia_energetica);  % Média da eficiência energética (%)
+% Exibir as médias no console
+disp(['Produção média de H2 (kg/h): ', num2str(producao_media_kg_h)]);
+disp(['Eficiência média (%): ', num2str(eficiencia_media)]);
+figure;
+% Gráfico da Tensão da célula
+subplot(2, 2, 1);
+plot(tempo, V_cell_values, 'b-o');  % Azul
+title('Tensão da Célula ao Longo do Tempo');
+xlabel('Hora');
+ylabel('Tensão (V)');
+xticks(tempo);  % Define as marcações do eixo X para 1, 2, ..., 24
+% Gráfico da Produção de H2 em kg/h
+subplot(2, 2, 2);
+plot(tempo, H2_production_kg_h, 'b-o');  % Azul
+title('Produção de H2 (kg/h)');
+xlabel('Hora');
+ylabel('Produção de H2 (kg/h)');
+xticks(tempo);  % Define as marcações do eixo X para 1, 2, ..., 24
+% Gráfico da Potência de Entrada (MW)
+subplot(2, 2, 3);
+plot(tempo, potencia_24h / 1e6, 'b-o');  % Azul (convertido para MW)
+title('Potência de Entrada (MW)');
+xlabel('Hora');
+ylabel('Potência de Entrada (MW)');
+xticks(tempo);  % Define as marcações do eixo X para 1, 2, ..., 24
+% Gráfico da Eficiência Energética
+subplot(2, 2, 4);
+plot(tempo, eficiencia_energetica, 'b-o');  % Azul
+title('Eficiência Energética');
+xlabel('Hora');
+ylabel('Eficiência (%)');
+xticks(tempo);  % Define as marcações do eixo X para 1, 2, ..., 24
+% Adicionar texto com a produção média e eficiência média
+annotation('textbox', [0.15, 0.85, 0.3, 0.1], 'String', ...
+   ['Producao média de H2: ', num2str(producao_media_kg_h), ' kg/h'], ...
+   'FitBoxToText', 'on', 'BackgroundColor', 'white');
+annotation('textbox', [0.15, 0.75, 0.3, 0.1], 'String', ...
+   ['Eficiência média: ', num2str(eficiencia_media), ' %'], ...
+   'FitBoxToText', 'on', 'BackgroundColor', 'white');
+end
+
+
